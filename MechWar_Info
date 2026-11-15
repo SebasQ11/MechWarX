@@ -1,0 +1,134 @@
+INSERT INTO mechwarx.mechtypex (TypeName)
+VALUES
+('Light Scout'),
+('Assault Brawler'),
+('Heavy Artillery'),
+('Juggernaut');
+
+SELECT * From mechwarx.mechtypex;
+
+
+
+INSERT INTO mechwarx.garage
+(GarageName, Address, PhoneNumber)
+VALUES
+('GARAGE 1', 'Sector A, Grid 101', '305-555-0101'),
+('GARAGE 2', 'Sector B, Grid 202', '305-555-0102'),
+('GARAGE 3', 'Sector C, Grid 303', '305-555-0103');
+
+SELECT *FROM mechwarx.garage;
+
+INSERT INTO mechwarx.client
+(ClientID, FirstName, LastName, CorporateAddress,
+ PhoneNumber, Email, CombatLicenseVerificationToken,
+ LicenseExpirationDate)
+VALUES
+(1, 'Juan', 'Montilva', '123 Street A',
+ '305-555-0201', 'Juan@Mech.com',
+ 'LIC-1111', '2028-12-31'),
+
+(2, 'Chanel', 'Young', '234 Street B',
+ '305-555-0202', 'Chanel@Mech.com',
+ 'LIC-1112', '2029-06-15'),
+
+(3, 'Sebastian', 'Quesada', '345 Street C',
+ '305-555-0203', 'Sebastian@Mech.com',
+ 'LIC-1113', '2028-09-20');
+
+
+SELECT * FROM mechwarx.client;
+
+
+INSERT INTO mechwarx.staff
+(FullName, PhoneNumber, Email, GarageID)
+VALUES
+('John Doe', '305-555-0301',
+ 'John.Doe@Mechwar.com', 1),
+
+('Jane Doe', '305-555-0302',
+ 'Jane.Doe@Mechwar.com', 2),
+
+('Josh Doe', '305-555-0303',
+ 'Josh.Doe@Mechwar.com', 3);
+
+
+SELECT * FROM mechwarx.staff;
+
+
+INSERT INTO mechwarx.mech
+(ChassisSerialNumber, Make, Model, AssemblyYear,
+ ArmorColor, DailyRate, CombatHours, Status,
+ MechTypeID, GarageID)
+VALUES
+('SN123', 'Nissan', 'Scout-54', 2024,
+ 'Black', 500.00, 150.00, 'Available', 1, 1),
+
+('SN234', 'Honda', 'Brawler-72', 2025,
+ 'Red', 700.00, 110.00, 'Available', 7, 2),
+
+('SN345', 'Toyota', 'Artillery-21', 2023,
+ 'Green', 900.00, 90.00, 'Available', 8, 3),
+
+('SN456', 'Roll Royce', 'Juggernaut-76', 2026,
+ 'Blue', 1500.00, 45.00, 'Available', 9, 1);
+
+SELECT * FROM mechwarx.mech;
+
+
+INSERT INTO mechwarx.deploymentmanifest
+(ClientID, MechID, DeployGarageID, ReturnGarageID,
+ ScheduledDeploymentDateTime, ScheduledReturnDateTime,
+ ActualStartTimestamp, ActualReturnTimestamp,
+ EstimatedCost, ActualCost, Status)
+VALUES
+(1, 1, 1, 2,
+ '2026-12-01 09:00:00',
+ '2026-12-03 09:00:00',
+ NULL, NULL,
+ 1000.00, NULL, 'Match Booked'),
+
+(2, 2, 2, 3,
+ '2026-12-05 10:00:00',
+ '2026-12-07 10:00:00',
+ NULL, NULL,
+ 1400.00, NULL, 'Match Booked'),
+
+(3, 3, 3, 1,
+ '2026-12-10 12:00:00',
+ '2026-12-12 12:00:00',
+ NULL, NULL,
+ 1800.00, NULL, 'Match Booked');
+
+SELECT * FROM mechwarx.deploymentmanifest;
+
+
+INSERT INTO mechwarx.maintenancelog
+(MechID, ClientID, StaffID, ReportedAt,
+ IssueType, DamageDescription, Status,
+ ResolutionTimestamp, EngineeringNotes)
+VALUES
+(1, 1, 1,
+ '2026-11-10 10:30:00',
+ 'Overheating',
+ 'Coolant hose leak',
+ 'Resolved',
+ '2026-11-10 15:00:00',
+ 'New Hose attached.'),
+
+(2, 2, 2,
+ '2026-11-10 11:00:00',
+ 'Armor Plating Cracked',
+ 'Hull Cracked Near Helmet',
+ 'In Progress',
+ NULL,
+ 'Awaiting Delivery of New Hull'),
+
+(3, 3, 3,
+ '2026-11-10 12:00:00',
+ 'Hydraulic Failure',
+ 'Knee Hydraulic Will Not Move',
+ 'In Progress',
+ NULL,
+ 'Mech must remain unavailable until repairs are completed.');
+
+SELECT * FROM mechwarx.maintenancelog;
