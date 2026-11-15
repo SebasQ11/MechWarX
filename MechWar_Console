@@ -1,0 +1,110 @@
+
+CREATE DATABASE IF NOT EXISTS MechWarX;
+USE MechWarX;
+
+-- 1. MechType
+CREATE TABLE IF NOT EXISTS MechTypeX (
+    MechTypeID INT AUTO_INCREMENT,
+    TypeName VARCHAR(50) NOT NULL UNIQUE,
+    PRIMARY KEY (MechTypeID)
+);
+
+-- 2. Garage
+CREATE TABLE IF NOT EXISTS Garage (
+    GarageID INT AUTO_INCREMENT,
+    GarageName VARCHAR(100) NOT NULL,
+    Address VARCHAR(255),
+    PhoneNumber VARCHAR(20),
+    PRIMARY KEY (GarageID)
+);
+
+-- 3. Client
+CREATE TABLE IF NOT EXISTS Client (
+    ClientID INT AUTO_INCREMENT,
+    FirstName VARCHAR(50) NOT NULL,
+    LastName VARCHAR(50) NOT NULL,
+    CorporateAddress VARCHAR(255),
+    PhoneNumber VARCHAR(20),
+    Email VARCHAR(100),
+    CombatLicenseVerificationToken VARCHAR(255),
+    LicenseExpirationDate DATE,
+    PRIMARY KEY (ClientID)
+);
+
+-- 4. Staff
+CREATE TABLE IF NOT EXISTS Staff (
+    StaffID INT AUTO_INCREMENT,
+    FullName VARCHAR(100) NOT NULL,
+    PhoneNumber VARCHAR(20),
+    Email VARCHAR(100),
+    GarageID INT,
+    PRIMARY KEY (StaffID),
+    FOREIGN KEY (GarageID)
+        REFERENCES Garage(GarageID)
+);
+
+-- 5. Mech
+CREATE TABLE IF NOT EXISTS Mech (
+    MechID INT AUTO_INCREMENT,
+    ChassisSerialNumber VARCHAR(100) NOT NULL UNIQUE,
+    Make VARCHAR(50),
+    Model VARCHAR(50),
+    AssemblyYear INT,
+    ArmorColor VARCHAR(50),
+    DailyRate DECIMAL(10,2),
+    CombatHours DECIMAL(10,2),
+    Status VARCHAR(50),
+    MechTypeID INT,
+    GarageID INT,
+    PRIMARY KEY (MechID),
+    FOREIGN KEY (MechTypeID)
+        REFERENCES MechTypeX(MechTypeID),
+    FOREIGN KEY (GarageID)
+        REFERENCES Garage(GarageID)
+);
+
+-- 6. DeploymentManifest
+CREATE TABLE IF NOT EXISTS DeploymentManifest (
+    SerialID INT AUTO_INCREMENT,
+    ClientID INT,
+    MechID INT,
+    DeployGarageID INT,
+    ReturnGarageID INT,
+    ScheduledDeploymentDateTime DATETIME,
+    ScheduledReturnDateTime DATETIME,
+    ActualStartTimestamp DATETIME,
+    ActualReturnTimestamp DATETIME,
+    EstimatedCost DECIMAL(10,2),
+    ActualCost DECIMAL(10,2),
+    Status VARCHAR(50),
+    PRIMARY KEY (SerialID),
+    FOREIGN KEY (ClientID)
+        REFERENCES Client(ClientID),
+    FOREIGN KEY (MechID)
+        REFERENCES Mech(MechID),
+    FOREIGN KEY (DeployGarageID)
+        REFERENCES Garage(GarageID),
+    FOREIGN KEY (ReturnGarageID)
+        REFERENCES Garage(GarageID)
+);
+
+-- 7. MaintenanceLog
+CREATE TABLE IF NOT EXISTS MaintenanceLog (
+    LogID INT AUTO_INCREMENT,
+    MechID INT,
+    ClientID INT,
+    StaffID INT,
+    ReportedAt DATETIME,
+    IssueType VARCHAR(100),
+    DamageDescription TEXT,
+    Status VARCHAR(50),
+    ResolutionTimestamp DATETIME,
+    EngineeringNotes TEXT,
+    PRIMARY KEY (LogID),
+    FOREIGN KEY (MechID)
+        REFERENCES Mech(MechID),
+    FOREIGN KEY (ClientID)
+        REFERENCES Client(ClientID),
+    FOREIGN KEY (StaffID)
+        REFERENCES Staff(StaffID)
+);
