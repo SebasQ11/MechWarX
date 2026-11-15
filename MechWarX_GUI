@@ -1,0 +1,822 @@
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.sql.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+public class App extends JFrame {
+
+    private final String url = "jdbc:mysql://localhost:3306/mechwarx";
+    private final String user = "root";
+    private final String password;
+
+    private final DefaultTableModel fleet = model();
+    private final DefaultTableModel sponsors = model();
+    private final DefaultTableModel bookings = model();
+    private final DefaultTableModel logs = model();
+
+    private static final DateTimeFormatter DATE =
+        DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss")
+            .withResolverStyle(
+                java.time.format.ResolverStyle.STRICT
+            );
+
+    interface Task {
+        void run() throws Exception;
+    }
+
+    record Choice(int id, String name) {
+
+        public String toString() {
+            return id + " - " + name;
+        }
+    }
+
+    public App(String password) {
+
+        this.password = password;
+
+        setTitle("MechWar-X Management System");
+        setSize(1250, 760);
+        setLocationRelativeTo(null);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+
+        JTabbedPane tabs = new JTabbedPane();
+
+        tabs.addTab(
+            "Mech Fleet Registration",
+            fleetPanel()
+        );
+
+        tabs.addTab(
+            "Sponsor Manifest Dashboard",
+            sponsorPanel()
+        );
+
+        tabs.addTab(
+            "Battle Hangar Operations",
+            bookingPanel()
+        );
+
+        tabs.addTab(
+            "Incident Command & Diagnostics",
+            maintenancePanel()
+        );
+
+        add(tabs);
+
+        refresh();
+    }
+
+    private Connection connect() throws SQLException {
+
+        return DriverManager.getConnection(
+            url, user, password
+        );
+    }
+
+    private static DefaultTableModel model() {
+
+        return new DefaultTableModel() {
+
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+    }
+
+    private void action(Task t) {
+
+        try {
+
+            t.run();
+
+        } catch (Exception e) {
+
+            JOptionPane.showMessageDialog(
+                this,
+                e.getMessage(),
+                "Error",
+                JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
+    private JButton button(String name, Task t) {
+
+        JButton b = new JButton(name);
+
+        b.addActionListener(e -> action(t));
+
+        return b;
+    }
+
+    private JPanel form() {
+
+        JPanel p = new JPanel(
+            new GridLayout(0, 2, 8, 6)
+        );
+
+        p.setBorder(
+            BorderFactory.createEmptyBorder(
+                12, 12, 12, 12
+            )
+        );
+
+        return p;
+    }
+
+    private void field(
+        JPanel p,
+        String name,
+        JComponent c
+    ) {
+
+        p.add(new JLabel(name));
+        p.add(c);
+    }
+
+    private JTextField text(
+        JPanel p,
+        String name
+    ) {
+
+        JTextField f = new JTextField();
+
+        field(p, name, f);
+
+        return f;
+    }
+
+    private JPanel screen(
+        JPanel f,
+        DefaultTableModel m
+    ) {
+
+        JPanel p = new JPanel(
+            new BorderLayout()
+        );
+
+        p.add(f, BorderLayout.NORTH);
+
+        JTable table = new JTable(m);
+
+        table.setAutoResizeMode(
+            JTable.AUTO_RESIZE_OFF
+        );
+
+        table.setFillsViewportHeight(true);
+
+        p.add(
+            new JScrollPane(table),
+            BorderLayout.CENTER
+        );
+
+        return p;
+    }
+
+    private String required(
+        JTextField f,
+        String name
+    ) {
+
+        String s = f.getText().trim();
+
+        if (s.isEmpty()) {
+
+            throw new IllegalArgumentException(
+                name + " is required"
+            );
+        }
+
+        return s;
+    }
+
+    private int positive(
+        JTextField f,
+        String name
+    ) {
+
+        int n = Integer.parseInt(
+            required(f, name)
+        );
+
+        if (n <= 0) {
+
+            throw new IllegalArgumentException(
+                name + " must be positive"
+            );
+        }
+
+        return n;
+    }
+
+    private BigDecimal number(
+        JTextField f,
+        String name,
+        boolean zero
+    ) {
+
+        BigDecimal n = new BigDecimal(
+            required(f, name)
+        );
+
+        if (
+            n.signum() < 0 ||
+            (!zero && n.signum() == 0)
+        ) {
+
+            throw new IllegalArgumentException(
+                name + " must be " +
+                (zero ? "nonnegative" : "positive")
+            );
+        }
+
+        return n;
+    }
+    private JComboBox<Choice> choices(String sql) {
+
+        JComboBox<Choice> b = new JComboBox<>();
+
+        action(() -> {
+
+            try (
+                Connection c = connect();
+                Statement s = c.createStatement();
+                ResultSet r = s.executeQuery(sql)
+            ) {
+
+                while (r.next()) {
+
+                    b.addItem(
+                        new Choice(
+                            r.getInt(1),
+                            r.getString(2)
+                        )
+                    );
+                }
+            }
+        });
+
+        return b;
+    }
+
+    private int id(JComboBox<Choice> b) {
+
+        Choice c = (Choice) b.getSelectedItem();
+
+        if (c == null) {
+
+            throw new IllegalArgumentException(
+                "Select a valid record"
+            );
+        }
+
+        return c.id();
+    }
+
+    private void query(
+        DefaultTableModel m,
+        String sql,
+        Object... args
+    ) throws SQLException {
+
+        try (
+            Connection c = connect();
+            PreparedStatement p =
+                c.prepareStatement(sql)
+        ) {
+
+            for (int i = 0; i < args.length; i++) {
+
+                p.setObject(i + 1, args[i]);
+            }
+
+            try (ResultSet r = p.executeQuery()) {
+
+                ResultSetMetaData md =
+                    r.getMetaData();
+
+                int n = md.getColumnCount();
+
+                String[] names = new String[n];
+
+                for (int i = 0; i < n; i++) {
+
+                    names[i] =
+                        md.getColumnLabel(i + 1);
+                }
+
+                m.setColumnIdentifiers(names);
+                m.setRowCount(0);
+
+                while (r.next()) {
+
+                    Object[] row = new Object[n];
+
+                    for (int i = 0; i < n; i++) {
+
+                        row[i] = r.getObject(i + 1);
+                    }
+
+                    m.addRow(row);
+                }
+            }
+        }
+    }
+
+    private void execute(
+        String sql,
+        Object... args
+    ) throws SQLException {
+
+        try (
+            Connection c = connect();
+            PreparedStatement p =
+                c.prepareStatement(sql)
+        ) {
+
+            for (int i = 0; i < args.length; i++) {
+
+                p.setObject(i + 1, args[i]);
+            }
+
+            p.executeUpdate();
+        }
+    }
+    private void call(
+        String sql,
+        Object... args
+    ) throws SQLException {
+
+        try (
+            Connection c = connect();
+            CallableStatement p =
+                c.prepareCall(sql)
+        ) {
+
+            for (int i = 0; i < args.length; i++) {
+
+                p.setObject(i + 1, args[i]);
+            }
+
+            p.execute();
+        }
+    }
+
+    private void success(String msg) {
+
+        JOptionPane.showMessageDialog(
+            this,
+            msg
+        );
+
+        refresh();
+    }
+
+    private void refresh() {
+
+        action(() -> query(
+            fleet,
+            "SELECT * FROM mech ORDER BY MechID"
+        ));
+
+        action(() -> query(
+            bookings,
+            """
+            SELECT *
+            FROM deploymentmanifest
+            ORDER BY SerialID DESC
+            """
+        ));
+
+        action(() -> query(
+            logs,
+            """
+            SELECT *
+            FROM maintenancelog
+            WHERE ResolutionTimestamp IS NULL
+            ORDER BY LogID DESC
+            """
+        ));
+    }
+
+    private JPanel fleetPanel() {
+
+        JPanel p = form();
+
+        JTextField serial =
+            text(p, "Chassis Serial Number");
+
+        JTextField make =
+            text(p, "Make");
+
+        JTextField model =
+            text(p, "Model");
+
+        JTextField year =
+            text(p, "Assembly Year");
+
+        JTextField color =
+            text(p, "Armor Color");
+
+        JTextField rate =
+            text(p, "Daily Rate");
+
+        JTextField hours =
+            text(p, "Combat Hours");
+
+        JComboBox<Choice> type = choices(
+            """
+            SELECT MechTypeID, TypeName
+            FROM mechtypex
+            ORDER BY MechTypeID
+            """
+        );
+
+        JComboBox<Choice> garage = choices(
+            """
+            SELECT GarageID, GarageName
+            FROM garage
+            ORDER BY GarageID
+            """
+        );
+
+        field(p, "Mech Type", type);
+        field(p, "Garage", garage);
+
+        p.add(button("Register Mech", () -> {
+
+            String sn = required(
+                serial,
+                "Serial Number"
+            );
+
+            int y = positive(
+                year,
+                "Assembly Year"
+            );
+
+            if (
+                y > java.time.Year.now().getValue()
+            ) {
+
+                throw new IllegalArgumentException(
+                    "Assembly year cannot be in the future"
+                );
+            }
+
+            String sql = """
+                INSERT INTO mech
+                (ChassisSerialNumber,
+                 Make,
+                 Model,
+                 AssemblyYear,
+                 ArmorColor,
+                 DailyRate,
+                 CombatHours,
+                 Status,
+                 MechTypeID,
+                 GarageID)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+
+            execute(
+                sql,
+                sn,
+                required(make, "Make"),
+                required(model, "Model"),
+                y,
+                required(color, "Color"),
+                number(rate, "Daily Rate", false),
+                number(hours, "Combat Hours", true),
+                "Available",
+                id(type),
+                id(garage)
+            );
+
+            success("Mech registered successfully!");
+
+            serial.setText("");
+            make.setText("");
+            model.setText("");
+            year.setText("");
+            color.setText("");
+            rate.setText("");
+            hours.setText("");
+        }));
+
+        p.add(button("Refresh Fleet", () -> {
+
+            query(
+                fleet,
+                "SELECT * FROM mech ORDER BY MechID"
+            );
+        }));
+
+        return screen(p, fleet);
+    }
+
+    private JPanel sponsorPanel() {
+
+        JPanel p = form();
+
+        JTextField client =
+            text(p, "Enter Client ID");
+
+        p.add(button("Search Deployments", () -> {
+
+            String sql = """
+                SELECT
+                    d.SerialID,
+                    d.ClientID,
+                    CONCAT(
+                        c.FirstName,
+                        ' ',
+                        c.LastName
+                    ) AS Sponsor,
+                    m.Model,
+                    d.DeployGarageID,
+                    d.ReturnGarageID,
+                    d.ScheduledDeploymentDateTime,
+                    d.ScheduledReturnDateTime,
+                    d.ActualStartTimestamp,
+                    d.ActualReturnTimestamp,
+                    d.EstimatedCost,
+                    d.ActualCost,
+                    d.Status
+                FROM deploymentmanifest d
+                JOIN client c
+                    ON c.ClientID = d.ClientID
+                JOIN mech m
+                    ON m.MechID = d.MechID
+                WHERE d.ClientID = ?
+                ORDER BY
+                    d.ScheduledDeploymentDateTime DESC
+                """;
+
+            query(
+                sponsors,
+                sql,
+                positive(client, "Client ID")
+            );
+
+            if (sponsors.getRowCount() == 0) {
+
+                JOptionPane.showMessageDialog(
+                    this,
+                    "No manifests found for this client."
+                );
+            }
+        }));
+
+        p.add(button("Clear Results", () -> {
+
+            sponsors.setRowCount(0);
+            client.setText("");
+        }));
+
+        return screen(p, sponsors);
+    }
+
+    private JPanel bookingPanel() {
+
+        JPanel p = form();
+
+        JTextField client =
+            text(p, "Client ID");
+
+        JTextField mech =
+            text(p, "Mech ID");
+
+        JComboBox<Choice> from = choices(
+            """
+            SELECT GarageID, GarageName
+            FROM garage
+            ORDER BY GarageID
+            """
+        );
+
+        JComboBox<Choice> to = choices(
+            """
+            SELECT GarageID, GarageName
+            FROM garage
+            ORDER BY GarageID
+            """
+        );
+
+        field(p, "Departure Garage", from);
+        field(p, "Return Garage", to);
+
+        JTextField start = text(
+            p,
+            "Start (yyyy-MM-dd HH:mm:ss)"
+        );
+
+        JTextField end = text(
+            p,
+            "Return (yyyy-MM-dd HH:mm:ss)"
+        );
+
+        JTextField cancel = text(
+            p,
+            "Manifest ID to Cancel"
+        );
+
+        p.add(button("Book Deployment", () -> {
+
+            Timestamp s = Timestamp.valueOf(
+                LocalDateTime.parse(
+                    required(start, "Start Date"),
+                    DATE
+                )
+            );
+
+            Timestamp e = Timestamp.valueOf(
+                LocalDateTime.parse(
+                    required(end, "Return Date"),
+                    DATE
+                )
+            );
+
+            if (!e.after(s)) {
+
+                throw new IllegalArgumentException(
+                    "Return date must be after start date"
+                );
+            }
+
+            call(
+                "{CALL BookDeployment(?,?,?,?,?,?)}",
+                positive(client, "Client ID"),
+                positive(mech, "Mech ID"),
+                id(from),
+                id(to),
+                s,
+                e
+            );
+
+            success("Deployment booked successfully!");
+        }));
+
+        p.add(button("Cancel Deployment", () -> {
+
+            int manifestID = positive(
+                cancel,
+                "Manifest ID"
+            );
+
+            int answer =
+                JOptionPane.showConfirmDialog(
+                    this,
+                    "Cancel deployment " + manifestID + "?",
+                    "Confirm Cancellation",
+                    JOptionPane.YES_NO_OPTION
+                );
+
+            if (answer == JOptionPane.YES_OPTION) {
+
+                call(
+                    "{CALL CancelDeployment(?)}",
+                    manifestID
+                );
+
+                success("Deployment cancelled successfully!");
+            }
+        }));
+
+        p.add(button("Refresh Deployments", () -> {
+
+            query(
+                bookings,
+                """
+                SELECT *
+                FROM deploymentmanifest
+                ORDER BY SerialID DESC
+                """
+            );
+        }));
+
+        return screen(p, bookings);
+    }
+
+    private JPanel maintenancePanel() {
+
+        JPanel p = form();
+
+        JTextField mech =
+            text(p, "Mech ID");
+
+        JTextField client =
+            text(p, "Client ID");
+
+        JTextField staff =
+            text(p, "Staff ID");
+
+        JComboBox<String> issue =
+            new JComboBox<>(
+                new String[] {
+                    "Critical System Failure",
+                    "Hydraulic Failure",
+                    "Armor Damage",
+                    "Overheating",
+                    "Other"
+                }
+            );
+
+        field(p, "Issue Type", issue);
+
+        JTextField damage =
+            text(p, "Damage Description");
+
+        JTextField notes =
+            text(p, "Engineering Notes");
+
+        JTextField log =
+            text(p, "Log ID to Resolve");
+
+        JTextField resolution =
+            text(p, "Resolution Notes");
+
+        p.add(button("Report Incident", () -> {
+
+            call(
+                "{CALL ReportIncident(?,?,?,?,?,?)}",
+                positive(mech, "Mech ID"),
+                positive(client, "Client ID"),
+                positive(staff, "Staff ID"),
+                issue.getSelectedItem(),
+                required(
+                    damage,
+                    "Damage Description"
+                ),
+                notes.getText().trim()
+            );
+
+            success("Incident reported successfully!");
+
+            damage.setText("");
+            notes.setText("");
+        }));
+
+        p.add(button("Resolve Incident", () -> {
+
+            call(
+                "{CALL ResolveIncident(?,?)}",
+                positive(log, "Log ID"),
+                required(
+                    resolution,
+                    "Resolution Notes"
+                )
+            );
+
+            success("Incident resolved successfully!");
+
+            log.setText("");
+            resolution.setText("");
+        }));
+
+        p.add(button("Refresh Active Logs", () -> {
+
+            query(
+                logs,
+                """
+                SELECT *
+                FROM maintenancelog
+                WHERE ResolutionTimestamp IS NULL
+                ORDER BY LogID DESC
+                """
+            );
+        }));
+
+        return screen(p, logs);
+    }
+
+    public static void main(String[] args) {
+
+        SwingUtilities.invokeLater(() -> {
+
+            JPasswordField f =
+                new JPasswordField();
+
+            int answer =
+                JOptionPane.showConfirmDialog(
+                    null,
+                    f,
+                    "Enter MySQL Root Password",
+                    JOptionPane.OK_CANCEL_OPTION
+                );
+
+            if (answer == JOptionPane.OK_OPTION) {
+
+                String password =
+                    new String(f.getPassword());
+
+                new App(password).setVisible(true);
+            }
+        });
+    }
+}
