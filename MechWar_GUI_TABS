@@ -1,0 +1,385 @@
+USE mechwarx;
+
+CREATE PROCEDURE mechwarx.BookDeployment(
+    IN c INT,
+    IN m INT,
+    IN g1 INT,
+    IN g2 INT,
+    IN s DATETIME,
+    IN e DATETIME
+)
+BEGIN
+    DECLARE r DECIMAL(10,2);
+    DECLARE st VARCHAR(50);
+    DECLARE n INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    START TRANSACTION;
+
+    SELECT DailyRate, Status
+    INTO r, st
+    FROM mechwarx.mech
+    WHERE MechID = m
+    FOR UPDATE;
+
+    IF r IS NULL OR r <= 0
+       OR s IS NULL OR e IS NULL
+       OR s < NOW() OR e <= s THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid mech, rate or booking dates';
+
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mechwarx.client
+        WHERE ClientID = c
+        AND LicenseExpirationDate >= DATE(e)
+        AND CombatLicenseVerificationToken IS NOT NULL
+        AND CombatLicenseVerificationToken <> ''
+    ) THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Client needs a valid combat license';
+
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mechwarx.garage
+        WHERE GarageID = g1
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mechwarx.garage
+        WHERE GarageID = g2
+    ) THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid garage';
+
+    END IF;
+
+    IF st IS NULL
+       OR st NOT IN ('Available', 'Match Booked')
+       OR EXISTS (
+           SELECT 1
+           FROM mechwarx.maintenancelog
+           WHERE MechID = m
+           AND IssueType = 'Critical System Failure'
+           AND ResolutionTimestamp IS NULL
+       ) THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Mech unavailable or under critical maintenance';
+
+    END IF;
+
+    SELECT COUNT(*) INTO n
+    FROM mechwarx.deploymentmanifest
+    WHERE MechID = m
+    AND Status NOT IN ('Cancelled', 'Completed')
+    AND ScheduledDeploymentDateTime < e
+    AND ScheduledReturnDateTime > s;
+
+    IF n > 0 THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Overlapping reservation';
+
+    END IF;
+
+    INSERT INTO mechwarx.deploymentmanifest
+    (ClientID, MechID, DeployGarageID, ReturnGarageID,
+     ScheduledDeploymentDateTime, ScheduledReturnDateTime,
+     EstimatedCost, Status)
+    VALUES
+    (c, m, g1, g2, s, e,
+     ROUND(r * CEIL(TIMESTAMPDIFF(SECOND, s, e) / 86400.0), 2),
+     'Match Booked');
+
+    UPDATE mechwarx.mech
+    SET Status = 'Match Booked'
+    WHERE MechID = m;
+
+    COMMIT;
+
+END;
+
+CREATE PROCEDURE mechwarx.CancelDeployment(
+    IN p_SerialID INT
+)
+BEGIN
+    DECLARE v_MechID INT;
+    DECLARE v_Status VARCHAR(50);
+    DECLARE v_Reservations INT;
+    DECLARE v_CriticalIssues INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    START TRANSACTION;
+
+    SELECT MechID
+    INTO v_MechID
+    FROM mechwarx.deploymentmanifest
+    WHERE SerialID = p_SerialID;
+
+    IF v_MechID IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Deployment does not exist';
+    END IF;
+
+    SELECT Status
+    INTO v_Status
+    FROM mechwarx.mech
+    WHERE MechID = v_MechID
+    FOR UPDATE;
+
+    SELECT Status
+    INTO v_Status
+    FROM mechwarx.deploymentmanifest
+    WHERE SerialID = p_SerialID
+    FOR UPDATE;
+
+    IF v_Status <> 'Match Booked' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Only booked deployments can be cancelled';
+    END IF;
+
+    UPDATE mechwarx.deploymentmanifest
+    SET Status = 'Cancelled'
+    WHERE SerialID = p_SerialID;
+
+    SELECT COUNT(*)
+    INTO v_Reservations
+    FROM mechwarx.deploymentmanifest
+    WHERE MechID = v_MechID
+    AND Status NOT IN ('Cancelled', 'Completed')
+    AND ScheduledReturnDateTime > NOW();
+
+    SELECT COUNT(*)
+    INTO v_CriticalIssues
+    FROM mechwarx.maintenancelog
+    WHERE MechID = v_MechID
+    AND IssueType = 'Critical System Failure'
+    AND ResolutionTimestamp IS NULL;
+
+    IF v_CriticalIssues > 0 THEN
+
+        UPDATE mechwarx.mech
+        SET Status = 'Maintenance Locked'
+        WHERE MechID = v_MechID;
+
+    ELSEIF v_Reservations > 0 THEN
+
+        UPDATE mechwarx.mech
+        SET Status = 'Match Booked'
+        WHERE MechID = v_MechID;
+
+    ELSE
+
+        UPDATE mechwarx.mech
+        SET Status = 'Available'
+        WHERE MechID = v_MechID;
+
+    END IF;
+
+    COMMIT;
+
+END;
+
+
+CREATE PROCEDURE mechwarx.ReportIncident(
+    IN p_MechID INT,
+    IN p_ClientID INT,
+    IN p_StaffID INT,
+    IN p_IssueType VARCHAR(100),
+    IN p_DamageDescription TEXT,
+    IN p_EngineeringNotes TEXT
+)
+BEGIN
+    DECLARE v_Status VARCHAR(50);
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    START TRANSACTION;
+
+    SELECT Status
+    INTO v_Status
+    FROM mechwarx.mech
+    WHERE MechID = p_MechID
+    FOR UPDATE;
+
+    IF v_Status IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Mech does not exist';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mechwarx.client
+        WHERE ClientID = p_ClientID
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Client does not exist';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mechwarx.staff
+        WHERE StaffID = p_StaffID
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Staff member does not exist';
+    END IF;
+
+    IF p_IssueType IS NULL
+       OR TRIM(p_IssueType) = ''
+       OR p_DamageDescription IS NULL
+       OR TRIM(p_DamageDescription) = '' THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Issue type and damage description are required';
+
+    END IF;
+
+    INSERT INTO mechwarx.maintenancelog
+    (MechID, ClientID, StaffID, ReportedAt,
+     IssueType, DamageDescription, Status,
+     EngineeringNotes)
+    VALUES
+    (p_MechID, p_ClientID, p_StaffID, NOW(),
+     p_IssueType, p_DamageDescription, 'Open',
+     p_EngineeringNotes);
+
+    IF p_IssueType = 'Critical System Failure' THEN
+
+        UPDATE mechwarx.mech
+        SET Status = 'Maintenance Locked'
+        WHERE MechID = p_MechID;
+
+    END IF;
+
+    COMMIT;
+
+END;
+
+CREATE PROCEDURE mechwarx.ResolveIncident(
+    IN p_LogID INT,
+    IN p_EngineeringNotes TEXT
+)
+BEGIN
+    DECLARE v_MechID INT;
+    DECLARE v_Status VARCHAR(50);
+    DECLARE v_Resolution DATETIME;
+    DECLARE v_CriticalIssues INT;
+    DECLARE v_Reservations INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    START TRANSACTION;
+
+    SELECT MechID
+    INTO v_MechID
+    FROM mechwarx.maintenancelog
+    WHERE LogID = p_LogID;
+
+    IF v_MechID IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Maintenance log does not exist';
+    END IF;
+
+    SELECT Status
+    INTO v_Status
+    FROM mechwarx.mech
+    WHERE MechID = v_MechID
+    FOR UPDATE;
+
+    SELECT ResolutionTimestamp
+    INTO v_Resolution
+    FROM mechwarx.maintenancelog
+    WHERE LogID = p_LogID
+    FOR UPDATE;
+
+    IF v_Resolution IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Incident is already resolved';
+    END IF;
+
+    IF p_EngineeringNotes IS NULL
+       OR TRIM(p_EngineeringNotes) = '' THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Resolution notes are required';
+
+    END IF;
+
+    UPDATE mechwarx.maintenancelog
+    SET Status = 'Resolved',
+        ResolutionTimestamp = NOW(),
+        EngineeringNotes = CONCAT_WS(
+            '\n',
+            EngineeringNotes,
+            p_EngineeringNotes
+        )
+    WHERE LogID = p_LogID;
+
+    SELECT COUNT(*)
+    INTO v_CriticalIssues
+    FROM mechwarx.maintenancelog
+    WHERE MechID = v_MechID
+    AND IssueType = 'Critical System Failure'
+    AND ResolutionTimestamp IS NULL;
+
+    SELECT COUNT(*)
+    INTO v_Reservations
+    FROM mechwarx.deploymentmanifest
+    WHERE MechID = v_MechID
+    AND Status NOT IN ('Cancelled', 'Completed')
+    AND ScheduledReturnDateTime > NOW();
+
+    IF v_CriticalIssues > 0 THEN
+
+        UPDATE mechwarx.mech
+        SET Status = 'Maintenance Locked'
+        WHERE MechID = v_MechID;
+
+    ELSEIF v_Reservations > 0 THEN
+
+        UPDATE mechwarx.mech
+        SET Status = 'Match Booked'
+        WHERE MechID = v_MechID;
+
+    ELSE
+
+        UPDATE mechwarx.mech
+        SET Status = 'Available'
+        WHERE MechID = v_MechID;
+
+    END IF;
+
+    COMMIT;
+
+END;
+
+SHOW PROCEDURE STATUS
+WHERE Db = 'mechwarx';
